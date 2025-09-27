@@ -96,10 +96,17 @@ subnet-calculator/
 ├── main.go           # Main application logic
 ├── index.html        # HTML template
 ├── main_test.go      # Unit tests
-└── README.md         # This file
+└── README.md         # Documentation
 ```
 
 ### Running Tests
+
+Make sure to initialize the project before running tests:
+```bash
+go mod init github.com/jurikolo/go-ip-subnet-calculator
+go mod tidy
+```
+
 ```bash
 # Run all tests
 go test
