@@ -34,8 +34,9 @@ WORKDIR /root/
 # Copy the binary from builder stage
 COPY --from=builder /app/main .
 
-# Change ownership of the binary
-RUN chown appuser:appgroup main
+# Change ownership and set execute permissions
+RUN chown appuser:appgroup main && \
+    chmod +x main
 
 # Switch to non-root user
 USER appuser
@@ -46,7 +47,7 @@ ENV GO_SUBNET_CALCULATOR_PORT=8080
 # Expose the port
 EXPOSE $GO_SUBNET_CALCULATOR_PORT
 
-# Health check (optional)
+# Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:${GO_SUBNET_CALCULATOR_PORT}/health || exit 1
 
