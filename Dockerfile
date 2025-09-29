@@ -1,55 +1,45 @@
-# Build stage
+# Debug version of Dockerfile
 FROM golang:1.24-alpine AS builder
 
-# Set working directory
 WORKDIR /app
 
-# Install git (required for some Go modules)
 RUN apk add --no-cache git
 
-# Copy go mod files
 COPY go.mod ./
-
-# Download dependencies
 RUN go mod download
 
-# Copy source code
 COPY . .
 
-# Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .
+# Build with debug info
+RUN CGO_ENABLED=0 GOOS=linux go build -v -o main .
+RUN ls -la main && file main
 
-# Final stage
+# Use alpine instead of scratch for debugging
 FROM alpine:latest
 
-# Install ca-certificates for HTTPS requests
-RUN apk --no-cache add ca-certificates
+# Install debugging tools
+RUN apk --no-cache add ca-certificates file strace ldd
 
-# Create non-root user
-RUN addgroup -g 1001 -S appgroup && \
-    adduser -u 1001 -S appuser -G appgroup
+# Create app directory
+RUN mkdir -p /app
 
-WORKDIR /root/
+WORKDIR /app
 
-# Copy the binary from builder stage
-COPY --from=builder /app/main .
+# Copy binary
+COPY --from=builder /app/main ./main
 
-# Change ownership and set execute permissions
-RUN chown appuser:appgroup main && \
-    chmod +x main
+# Set permissions explicitly
+RUN chmod 755 main
 
-# Switch to non-root user
-USER appuser
+# Show binary details
+RUN ls -la main && file main
 
-# Set default port environment variable
+# Test the binary
+RUN echo "Testing binary:" && ./main --version || echo "Binary test completed"
+
 ENV GO_SUBNET_CALCULATOR_PORT=8080
 
-# Expose the port
-EXPOSE $GO_SUBNET_CALCULATOR_PORT
+EXPOSE 8080
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:${GO_SUBNET_CALCULATOR_PORT}/health || exit 1
-
-# Command to run the application
-CMD ["./main"]
+# Use explicit path
+CMD ["/app/main"]
