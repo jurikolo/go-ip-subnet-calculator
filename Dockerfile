@@ -1,45 +1,26 @@
-# Debug version of Dockerfile
+# Build stage
 FROM golang:1.24-alpine AS builder
 
 WORKDIR /app
-
 RUN apk add --no-cache git
-
 COPY go.mod ./
 RUN go mod download
-
 COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .
 
-# Build with debug info
-RUN CGO_ENABLED=0 GOOS=linux go build -v -o main .
-RUN ls -la main && file main
-
-# Use alpine instead of scratch for debugging
+# Run stage
 FROM alpine:latest
 
-# Install debugging tools
-RUN apk --no-cache add ca-certificates file strace ldd
-
-# Create app directory
-RUN mkdir -p /app
-
+RUN apk --no-cache add ca-certificates
+RUN addgroup -g 1001 -S appgroup && \
+    adduser -u 1001 -S appuser -G appgroup
 WORKDIR /app
-
-# Copy binary
-COPY --from=builder /app/main ./main
-
-# Set permissions explicitly
-RUN chmod 755 main
-
-# Show binary details
-RUN ls -la main && file main
-
-# Test the binary
-RUN echo "Testing binary:" && ./main --version || echo "Binary test completed"
-
+COPY --from=builder /app/main .
+COPY index.html .
+RUN chown appuser:appgroup main index.html && \
+    chmod +x main
+USER appuser
 ENV GO_SUBNET_CALCULATOR_PORT=8080
+EXPOSE $GO_SUBNET_CALCULATOR_PORT
 
-EXPOSE 8080
-
-# Use explicit path
-CMD ["/app/main"]
+CMD ["./main"]
