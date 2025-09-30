@@ -9,6 +9,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"encoding/json"
+	"time"
 )
 
 type SubnetResult struct {
@@ -20,6 +22,46 @@ type SubnetResult struct {
 	MaxHostAddress   string
 	UsableHosts      string
 	Error            string
+}
+
+type HealthResponse struct {
+	Status    string    `json:"status"`
+	Timestamp time.Time `json:"timestamp"`
+	Version   string    `json:"version,omitempty"`
+	Uptime    string    `json:"uptime,omitempty"`
+}
+
+// required for health-check
+var startTime = time.Now()
+
+// health-check handler function
+func healthHandler(w http.ResponseWriter, r *http.Request) {
+	// Set response headers
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
+
+	// Calculate uptime
+	uptime := time.Since(startTime)
+
+	// Create health response
+	health := HealthResponse{
+		Status:    "healthy",
+		Timestamp: time.Now(),
+		Version:   "1.0.0", // You can make this dynamic if needed
+		Uptime:    uptime.String(),
+	}
+
+	// Return HTTP 200 OK with health status
+	w.WriteHeader(http.StatusOK)
+	
+	// Encode and send JSON response
+	if err := json.NewEncoder(w).Encode(health); err != nil {
+		log.Printf("Health check JSON encoding error: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
 }
 
 // loadTemplate loads and parses the HTML template from file
@@ -233,6 +275,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	http.HandleFunc("/", handler)
+	http.HandleFunc("/health", healthHandler)
 
 	// Get port from environment variable, default to 8080
 	port := os.Getenv("GO_SUBNET_CALCULATOR_PORT")
@@ -247,6 +290,7 @@ func main() {
 
 	address := ":" + port
 	fmt.Printf("IPv4 Subnet Calculator starting on http://localhost:%s\n", port)
+	fmt.Printf("Health check available at http://localhost:%s/health\n", port)
 	if err := http.ListenAndServe(address, nil); err != nil {
 		log.Fatal("Server failed to start:", err)
 	}
