@@ -1,5 +1,8 @@
 # IPv4 Subnet Calculator
 
+[![codecov](https://codecov.io/gh/jurikolo/go-ip-subnet-calculator/branch/master/graph/badge.svg)](https://codecov.io/gh/jurikolo/go-ip-subnet-calculator)
+[![Build Status](https://github.com/jurikolo/go-ip-subnet-calculator/workflows/Build%20and%20Deploy%20Go%20Application/badge.svg)](https://github.com/jurikolo/go-ip-subnet-calculator/actions)
+
 A simple, lightweight web-based IPv4 subnet calculator built with Go. This application provides an easy-to-use interface for calculating subnet information including network addresses, broadcast addresses, host ranges, and the number of usable hosts.
 
 ## Features
