@@ -521,8 +521,6 @@ func TestIPEqual(t *testing.T) {
 }
 
 func TestHealthHandler_Success(t *testing.T) {
-	t.Parallel()
-
 	// Set a fixed start time for this test
 	testStartTime := time.Now().Add(-5 * time.Minute)
 	originalStartTime := startTime
@@ -590,8 +588,6 @@ func TestHealthHandler_Success(t *testing.T) {
 }
 
 func TestHealthHandler_ResponseStructure(t *testing.T) {
-	t.Parallel()
-
 	testStartTime := time.Now().Add(-10 * time.Minute)
 	originalStartTime := startTime
 	startTime = testStartTime
@@ -626,8 +622,6 @@ func TestHealthHandler_ResponseStructure(t *testing.T) {
 }
 
 func TestHealthHandler_HTTPMethod(t *testing.T) {
-	t.Parallel()
-
 	testStartTime := time.Now()
 	originalStartTime := startTime
 	startTime = testStartTime
@@ -662,8 +656,6 @@ func TestHealthHandler_HTTPMethod(t *testing.T) {
 }
 
 func TestHealthHandler_CacheHeaders(t *testing.T) {
-	t.Parallel()
-
 	testStartTime := time.Now()
 	originalStartTime := startTime
 	startTime = testStartTime
@@ -689,8 +681,6 @@ func TestHealthHandler_CacheHeaders(t *testing.T) {
 }
 
 func TestHealthHandler_ConcurrentRequests(t *testing.T) {
-	t.Parallel()
-
 	testStartTime := time.Now()
 	originalStartTime := startTime
 	startTime = testStartTime
@@ -727,8 +717,6 @@ func TestHealthHandler_ConcurrentRequests(t *testing.T) {
 }
 
 func TestHealthHandler_JSONValidFormat(t *testing.T) {
-	t.Parallel()
-
 	testStartTime := time.Now()
 	originalStartTime := startTime
 	startTime = testStartTime
@@ -958,8 +946,6 @@ func TestMain_InvalidPort(t *testing.T) {
 
 // TestMain_RouteRegistration tests that routes are properly registered
 func TestMain_RouteRegistration(t *testing.T) {
-	t.Parallel()
-
 	// Save original handlers
 	originalMux := http.DefaultServeMux
 	defer func() { http.DefaultServeMux = originalMux }()
@@ -1005,8 +991,6 @@ func TestMain_RouteRegistration(t *testing.T) {
 
 // TestMain_EnvironmentVariableHandling tests environment variable logic
 func TestMain_EnvironmentVariableHandling(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		name         string
 		envValue     string
@@ -1051,8 +1035,6 @@ func TestMain_EnvironmentVariableHandling(t *testing.T) {
 
 // TestMain_AddressFormatting tests address string construction
 func TestMain_AddressFormatting(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		port            string
 		expectedAddress string
@@ -1085,8 +1067,6 @@ func TestMain_AddressFormatting(t *testing.T) {
 
 // TestMain_LogOutput tests that main produces expected log output
 func TestMain_LogOutput(t *testing.T) {
-	t.Parallel()
-
 	// Test the log messages that would be printed
 	tests := []struct {
 		port          string
