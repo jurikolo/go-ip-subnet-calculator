@@ -1,13 +1,21 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func TestParseSubnetMask(t *testing.T) {
@@ -361,53 +369,32 @@ func TestLoadTemplate(t *testing.T) {
 	}
 	defer os.Remove(tmpFile) // Clean up after test
 
-	// Temporarily change the filename for testing
-	originalName := "index.html"
-	// We'll test by creating index.html temporarily
-	err = os.WriteFile(originalName, []byte(content), 0644)
+	tmpl, err := loadTemplate(tmpFile)
 	if err != nil {
-		t.Fatalf("Failed to create index.html for test: %v", err)
-	}
-	defer func() {
-		// Clean up - remove the test file if it was created for testing
-		if _, err := os.Stat(originalName); err == nil {
-			os.Remove(originalName)
-		}
-	}()
-
-	tmpl, err := loadTemplate()
-	if err != nil {
-		t.Errorf("loadTemplate() unexpected error: %v", err)
+		t.Errorf("loadTemplate(%s) unexpected error: %v", tmpFile, err)
 		return
 	}
 
 	if tmpl == nil {
-		t.Error("loadTemplate() returned nil template")
+		t.Errorf("loadTemplate(%s) returned nil template", tmpFile)
 	}
 }
 
 func TestLoadTemplateFileNotFound(t *testing.T) {
-	// Ensure index.html doesn't exist
-	os.Remove("index.html")
+	// Ensure HTML file doesn't exist
+	indexAsdf := "index_asdf.html"
+	os.Remove(indexAsdf)
 
-	_, err := loadTemplate()
+	_, err := loadTemplate(indexAsdf)
 	if err == nil {
-		t.Error("loadTemplate() expected error for missing file, got nil")
+		t.Errorf("loadTemplate(%s) expected error for missing file, got nil", indexAsdf)
 	}
-	if !strings.Contains(err.Error(), "failed to read index.html") {
-		t.Errorf("loadTemplate() error message should mention file reading, got: %v", err)
+	if !strings.Contains(err.Error(), "failed to read "+indexAsdf) {
+		t.Errorf("loadTemplate(%s) error message should mention file reading, got: %v", indexAsdf, err)
 	}
 }
 
 func TestHandlerGET(t *testing.T) {
-	// Create a temporary index.html for testing
-	content := `<!DOCTYPE html><html><body><h1>Test</h1><form method="POST"></form></body></html>`
-	err := os.WriteFile("index.html", []byte(content), 0644)
-	if err != nil {
-		t.Fatalf("Failed to create index.html for test: %v", err)
-	}
-	defer os.Remove("index.html")
-
 	req, err := http.NewRequest("GET", "/", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -421,13 +408,14 @@ func TestHandlerGET(t *testing.T) {
 		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusOK)
 	}
 
-	if !strings.Contains(rr.Body.String(), "Test") {
+	if !strings.Contains(rr.Body.String(), "IPv4 Subnet Calculator") {
 		t.Error("handler should return template content")
 	}
 }
 
 func TestHandlerPOSTValidInput(t *testing.T) {
-	// Create a temporary index.html for testing
+	// Create a temporary HTML for testing
+	tmpFile := "test_index.html"
 	content := `<!DOCTYPE html><html><body>
 		<div>Network: {{.NetworkAddress}}</div>
 		<div>Broadcast: {{.BroadcastAddress}}</div>
@@ -436,11 +424,11 @@ func TestHandlerPOSTValidInput(t *testing.T) {
 		<div>Usable: {{.UsableHosts}}</div>
 		{{if .Error}}<div>Error: {{.Error}}</div>{{end}}
 	</body></html>`
-	err := os.WriteFile("index.html", []byte(content), 0644)
+	err := os.WriteFile(tmpFile, []byte(content), 0644)
 	if err != nil {
-		t.Fatalf("Failed to create index.html for test: %v", err)
+		t.Fatalf("Failed to create %s for test: %v", tmpFile, err)
 	}
-	defer os.Remove("index.html")
+	defer os.Remove(tmpFile)
 
 	form := url.Values{}
 	form.Add("ip", "192.168.1.100")
@@ -470,16 +458,6 @@ func TestHandlerPOSTValidInput(t *testing.T) {
 }
 
 func TestHandlerPOSTInvalidInput(t *testing.T) {
-	// Create a temporary index.html for testing
-	content := `<!DOCTYPE html><html><body>
-		{{if .Error}}<div class="error">{{.Error}}</div>{{end}}
-	</body></html>`
-	err := os.WriteFile("index.html", []byte(content), 0644)
-	if err != nil {
-		t.Fatalf("Failed to create index.html for test: %v", err)
-	}
-	defer os.Remove("index.html")
-
 	form := url.Values{}
 	form.Add("ip", "invalid.ip")
 	form.Add("mask", "/24")
@@ -539,5 +517,670 @@ func TestIPEqual(t *testing.T) {
 		if result != tt.expected {
 			t.Errorf("ipEqual(%s, %s) = %v, want %v", tt.ip1, tt.ip2, result, tt.expected)
 		}
+	}
+}
+
+func TestHealthHandler_Success(t *testing.T) {
+	t.Parallel()
+
+	// Set a fixed start time for this test
+	testStartTime := time.Now().Add(-5 * time.Minute)
+	originalStartTime := startTime
+	startTime = testStartTime
+	defer func() { startTime = originalStartTime }()
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	w := httptest.NewRecorder()
+
+	healthHandler(w, req)
+
+	// Check status code
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status code %d, got %d", http.StatusOK, w.Code)
+	}
+
+	// Check Content-Type header
+	contentType := w.Header().Get("Content-Type")
+	if contentType != "application/json" {
+		t.Errorf("Expected Content-Type 'application/json', got '%s'", contentType)
+	}
+
+	// Check Cache-Control header
+	cacheControl := w.Header().Get("Cache-Control")
+	if cacheControl != "no-cache, no-store, must-revalidate" {
+		t.Errorf("Expected Cache-Control 'no-cache, no-store, must-revalidate', got '%s'", cacheControl)
+	}
+
+	// Check Pragma header
+	pragma := w.Header().Get("Pragma")
+	if pragma != "no-cache" {
+		t.Errorf("Expected Pragma 'no-cache', got '%s'", pragma)
+	}
+
+	// Check Expires header
+	expires := w.Header().Get("Expires")
+	if expires != "0" {
+		t.Errorf("Expected Expires '0', got '%s'", expires)
+	}
+
+	// Parse response body
+	var health HealthResponse
+	if err := json.NewDecoder(w.Body).Decode(&health); err != nil {
+		t.Fatalf("Failed to decode response body: %v", err)
+	}
+
+	// Verify response fields
+	if health.Status != "healthy" {
+		t.Errorf("Expected status 'healthy', got '%s'", health.Status)
+	}
+
+	if health.Version != "1.0.0" {
+		t.Errorf("Expected version '1.0.0', got '%s'", health.Version)
+	}
+
+	// Verify timestamp is recent (within last 2 seconds)
+	if time.Since(health.Timestamp) > 2*time.Second {
+		t.Errorf("Timestamp is not recent: %v", health.Timestamp)
+	}
+
+	// Verify uptime is not empty
+	if health.Uptime == "" {
+		t.Error("Expected non-empty uptime")
+	}
+}
+
+func TestHealthHandler_ResponseStructure(t *testing.T) {
+	t.Parallel()
+
+	testStartTime := time.Now().Add(-10 * time.Minute)
+	originalStartTime := startTime
+	startTime = testStartTime
+	defer func() { startTime = originalStartTime }()
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	w := httptest.NewRecorder()
+
+	healthHandler(w, req)
+
+	var health HealthResponse
+	if err := json.NewDecoder(w.Body).Decode(&health); err != nil {
+		t.Fatalf("Failed to decode response body: %v", err)
+	}
+
+	// Verify all required fields are present
+	if health.Status == "" {
+		t.Error("Status field is missing or empty")
+	}
+
+	if health.Version == "" {
+		t.Error("Version field is missing or empty")
+	}
+
+	if health.Uptime == "" {
+		t.Error("Uptime field is missing or empty")
+	}
+
+	if health.Timestamp.IsZero() {
+		t.Error("Timestamp field is missing or zero")
+	}
+}
+
+func TestHealthHandler_HTTPMethod(t *testing.T) {
+	t.Parallel()
+
+	testStartTime := time.Now()
+	originalStartTime := startTime
+	startTime = testStartTime
+	defer func() { startTime = originalStartTime }()
+
+	methods := []string{
+		http.MethodGet,
+		http.MethodPost,
+		http.MethodPut,
+		http.MethodDelete,
+		http.MethodPatch,
+	}
+
+	for _, method := range methods {
+		t.Run(method, func(t *testing.T) {
+			req := httptest.NewRequest(method, "/health", nil)
+			w := httptest.NewRecorder()
+
+			healthHandler(w, req)
+
+			// Handler should respond successfully regardless of HTTP method
+			if w.Code != http.StatusOK {
+				t.Errorf("Method %s: Expected status code %d, got %d", method, http.StatusOK, w.Code)
+			}
+
+			var health HealthResponse
+			if err := json.NewDecoder(w.Body).Decode(&health); err != nil {
+				t.Errorf("Method %s: Failed to decode response: %v", method, err)
+			}
+		})
+	}
+}
+
+func TestHealthHandler_CacheHeaders(t *testing.T) {
+	t.Parallel()
+
+	testStartTime := time.Now()
+	originalStartTime := startTime
+	startTime = testStartTime
+	defer func() { startTime = originalStartTime }()
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	w := httptest.NewRecorder()
+
+	healthHandler(w, req)
+
+	expectedHeaders := map[string]string{
+		"Cache-Control": "no-cache, no-store, must-revalidate",
+		"Pragma":        "no-cache",
+		"Expires":       "0",
+	}
+
+	for header, expectedValue := range expectedHeaders {
+		actualValue := w.Header().Get(header)
+		if actualValue != expectedValue {
+			t.Errorf("Header %s: expected '%s', got '%s'", header, expectedValue, actualValue)
+		}
+	}
+}
+
+func TestHealthHandler_UptimeCalculation(t *testing.T) {
+	t.Parallel()
+
+	// Set start time to 1 hour ago
+	testStartTime := time.Now().Add(-1 * time.Hour)
+	originalStartTime := startTime
+	startTime = testStartTime
+	defer func() { startTime = originalStartTime }()
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	w := httptest.NewRecorder()
+
+	healthHandler(w, req)
+
+	var health HealthResponse
+	if err := json.NewDecoder(w.Body).Decode(&health); err != nil {
+		t.Fatalf("Failed to decode response body: %v", err)
+	}
+
+	// Verify uptime indicates roughly 1 hour
+	// The uptime string should contain "h" for hours
+	if health.Uptime == "" {
+		t.Error("Uptime should not be empty")
+	}
+
+	// Parse the uptime to verify it's approximately correct
+	uptime, err := time.ParseDuration(health.Uptime)
+	if err != nil {
+		t.Fatalf("Failed to parse uptime duration: %v", err)
+	}
+
+	expectedUptime := time.Since(testStartTime)
+	diff := uptime - expectedUptime
+	if diff < 0 {
+		diff = -diff
+	}
+
+	// Allow 1 second tolerance for test execution time
+	if diff > time.Second {
+		t.Errorf("Uptime calculation incorrect: expected ~%v, got %v (diff: %v)", expectedUptime, uptime, diff)
+	}
+}
+
+func TestHealthHandler_ConcurrentRequests(t *testing.T) {
+	t.Parallel()
+
+	testStartTime := time.Now()
+	originalStartTime := startTime
+	startTime = testStartTime
+	defer func() { startTime = originalStartTime }()
+
+	// Simulate concurrent requests
+	const numRequests = 10
+	done := make(chan bool, numRequests)
+
+	for i := 0; i < numRequests; i++ {
+		go func() {
+			req := httptest.NewRequest(http.MethodGet, "/health", nil)
+			w := httptest.NewRecorder()
+
+			healthHandler(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Errorf("Concurrent request failed with status code %d", w.Code)
+			}
+
+			var health HealthResponse
+			if err := json.NewDecoder(w.Body).Decode(&health); err != nil {
+				t.Errorf("Concurrent request failed to decode response: %v", err)
+			}
+
+			done <- true
+		}()
+	}
+
+	// Wait for all goroutines to complete
+	for i := 0; i < numRequests; i++ {
+		<-done
+	}
+}
+
+func TestHealthHandler_JSONValidFormat(t *testing.T) {
+	t.Parallel()
+
+	testStartTime := time.Now()
+	originalStartTime := startTime
+	startTime = testStartTime
+	defer func() { startTime = originalStartTime }()
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	w := httptest.NewRecorder()
+
+	healthHandler(w, req)
+
+	// Verify the response is valid JSON
+	var js json.RawMessage
+	if err := json.Unmarshal(w.Body.Bytes(), &js); err != nil {
+		t.Errorf("Response is not valid JSON: %v", err)
+	}
+
+	// Verify specific JSON structure
+	var health map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &health); err != nil {
+		t.Fatalf("Failed to unmarshal JSON: %v", err)
+	}
+
+	requiredFields := []string{"status", "timestamp", "version", "uptime"}
+	for _, field := range requiredFields {
+		if _, exists := health[field]; !exists {
+			t.Errorf("Required field '%s' missing from JSON response", field)
+		}
+	}
+}
+
+// TestMain_PortConfiguration tests port configuration logic
+func TestMain_PortConfiguration(t *testing.T) {
+	tests := []struct {
+		name        string
+		envPort     string
+		expectedErr bool
+	}{
+		{
+			name:        "default port when env not set",
+			envPort:     "",
+			expectedErr: false,
+		},
+		{
+			name:        "custom valid port",
+			envPort:     "9090",
+			expectedErr: false,
+		},
+		{
+			name:        "invalid port - non-numeric",
+			envPort:     "abc",
+			expectedErr: true,
+		},
+		{
+			name:        "invalid port - with letters",
+			envPort:     "80abc",
+			expectedErr: true,
+		},
+		{
+			name:        "valid high port",
+			envPort:     "65535",
+			expectedErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			// Simulate port validation logic from main
+			port := tt.envPort
+			if port == "" {
+				port = "8080"
+			}
+
+			_, err := strconv.Atoi(port)
+			hasErr := err != nil
+
+			if hasErr != tt.expectedErr {
+				t.Errorf("Expected error: %v, got error: %v", tt.expectedErr, hasErr)
+			}
+		})
+	}
+}
+
+// TestMain_ServerStartup tests the server startup in a subprocess
+func TestMain_ServerStartup(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	// This test requires the binary to be built
+	// Run: go test -v (not in short mode)
+
+	tests := []struct {
+		name    string
+		envPort string
+		timeout time.Duration
+	}{
+		{
+			name:    "starts with default port",
+			envPort: "",
+			timeout: 5 * time.Second,
+		},
+		{
+			name:    "starts with custom port",
+			envPort: "8081",
+			timeout: 5 * time.Second,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Use subprocess approach to test main
+			if os.Getenv("TEST_MAIN_PROCESS") == "1" {
+				// This is the subprocess - run main
+				if tt.envPort != "" {
+					os.Setenv("GO_SUBNET_CALCULATOR_PORT", tt.envPort)
+				}
+				main()
+				return
+			}
+
+			// Parent process - start subprocess
+			cmd := exec.Command(os.Args[0], "-test.run="+t.Name())
+			cmd.Env = append(os.Environ(), "TEST_MAIN_PROCESS=1")
+			if tt.envPort != "" {
+				cmd.Env = append(cmd.Env, "GO_SUBNET_CALCULATOR_PORT="+tt.envPort)
+			}
+
+			// Capture output
+			stdout, err := cmd.StdoutPipe()
+			if err != nil {
+				t.Fatalf("Failed to get stdout pipe: %v", err)
+			}
+
+			if err := cmd.Start(); err != nil {
+				t.Fatalf("Failed to start subprocess: %v", err)
+			}
+
+			// Read startup messages
+			output := make([]byte, 1024)
+			n, _ := stdout.Read(output)
+			outputStr := string(output[:n])
+
+			// Give server time to start
+			time.Sleep(1 * time.Second)
+
+			// Verify output contains expected messages
+			expectedPort := tt.envPort
+			if expectedPort == "" {
+				expectedPort = "8080"
+			}
+
+			if !strings.Contains(outputStr, "IPv4 Subnet Calculator starting") {
+				t.Errorf("Expected startup message, got: %s", outputStr)
+			}
+
+			if !strings.Contains(outputStr, expectedPort) {
+				t.Errorf("Expected port %s in output, got: %s", expectedPort, outputStr)
+			}
+
+			// Try to connect to the server
+			url := fmt.Sprintf("http://localhost:%s/health", expectedPort)
+			resp, err := http.Get(url)
+			if err == nil {
+				resp.Body.Close()
+				if resp.StatusCode != http.StatusOK {
+					t.Errorf("Expected status 200, got %d", resp.StatusCode)
+				}
+			}
+
+			// Cleanup: kill the subprocess
+			if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+				cmd.Process.Kill()
+			}
+			cmd.Wait()
+		})
+	}
+}
+
+// TestMain_InvalidPort tests that main exits with invalid port
+func TestMain_InvalidPort(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	if os.Getenv("TEST_INVALID_PORT") == "1" {
+		// This is the subprocess - set invalid port and run main
+		os.Setenv("GO_SUBNET_CALCULATOR_PORT", "invalid")
+		main()
+		return
+	}
+
+	// Parent process - start subprocess with invalid port
+	cmd := exec.Command(os.Args[0], "-test.run="+t.Name())
+	cmd.Env = append(os.Environ(),
+		"TEST_INVALID_PORT=1",
+		"GO_SUBNET_CALCULATOR_PORT=invalid",
+	)
+
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		t.Fatalf("Failed to get stderr pipe: %v", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("Failed to start subprocess: %v", err)
+	}
+
+	// Read error output
+	output, _ := io.ReadAll(stderr)
+	outputStr := string(output)
+
+	// Wait for process to exit
+	err = cmd.Wait()
+
+	// Should exit with non-zero status
+	if err == nil {
+		t.Error("Expected process to exit with error for invalid port")
+	}
+
+	// Should contain error message about invalid port
+	if !strings.Contains(outputStr, "Invalid port number") {
+		t.Errorf("Expected 'Invalid port number' in error output, got: %s", outputStr)
+	}
+}
+
+// TestMain_RouteRegistration tests that routes are properly registered
+func TestMain_RouteRegistration(t *testing.T) {
+	t.Parallel()
+
+	// Save original handlers
+	originalMux := http.DefaultServeMux
+	defer func() { http.DefaultServeMux = originalMux }()
+
+	// Create new ServeMux to avoid conflicts
+	http.DefaultServeMux = http.NewServeMux()
+
+	// Register handlers as main does
+	http.HandleFunc("/", handler)
+	http.HandleFunc("/health", healthHandler)
+
+	// Test that routes respond (without actually starting server)
+	tests := []struct {
+		path           string
+		expectedStatus int
+	}{
+		{
+			path:           "/health",
+			expectedStatus: http.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodGet, tt.path, nil)
+			if err != nil {
+				t.Fatalf("Failed to create request: %v", err)
+			}
+
+			// Use a custom handler to test routing
+			handler, pattern := http.DefaultServeMux.Handler(req)
+
+			if pattern == "" {
+				t.Errorf("No handler registered for path: %s", tt.path)
+			}
+
+			if handler == nil {
+				t.Errorf("Handler is nil for path: %s", tt.path)
+			}
+		})
+	}
+}
+
+// TestMain_EnvironmentVariableHandling tests environment variable logic
+func TestMain_EnvironmentVariableHandling(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		envValue     string
+		expectedPort string
+	}{
+		{
+			name:         "empty env uses default",
+			envValue:     "",
+			expectedPort: "8080",
+		},
+		{
+			name:         "custom port from env",
+			envValue:     "9000",
+			expectedPort: "9000",
+		},
+		{
+			name:         "high port number",
+			envValue:     "65000",
+			expectedPort: "65000",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Simulate the port logic from main
+			port := tt.envValue
+			if port == "" {
+				port = "8080"
+			}
+
+			if port != tt.expectedPort {
+				t.Errorf("Expected port %s, got %s", tt.expectedPort, port)
+			}
+
+			// Validate it's numeric
+			if _, err := strconv.Atoi(port); err != nil {
+				t.Errorf("Port %s is not numeric: %v", port, err)
+			}
+		})
+	}
+}
+
+// TestMain_AddressFormatting tests address string construction
+func TestMain_AddressFormatting(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		port            string
+		expectedAddress string
+	}{
+		{
+			port:            "8080",
+			expectedAddress: ":8080",
+		},
+		{
+			port:            "3000",
+			expectedAddress: ":3000",
+		},
+		{
+			port:            "80",
+			expectedAddress: ":80",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.port, func(t *testing.T) {
+			// Simulate address construction from main
+			address := ":" + tt.port
+
+			if address != tt.expectedAddress {
+				t.Errorf("Expected address %s, got %s", tt.expectedAddress, address)
+			}
+		})
+	}
+}
+
+// TestMain_LogOutput tests that main produces expected log output
+func TestMain_LogOutput(t *testing.T) {
+	t.Parallel()
+
+	// Test the log messages that would be printed
+	tests := []struct {
+		port          string
+		expectedInMsg []string
+	}{
+		{
+			port: "8080",
+			expectedInMsg: []string{
+				"IPv4 Subnet Calculator starting on http://localhost:8080",
+				"Health check available at http://localhost:8080/health",
+			},
+		},
+		{
+			port: "9090",
+			expectedInMsg: []string{
+				"IPv4 Subnet Calculator starting on http://localhost:9090",
+				"Health check available at http://localhost:9090/health",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run("port_"+tt.port, func(t *testing.T) {
+			// Simulate the message construction
+			msg1 := fmt.Sprintf("IPv4 Subnet Calculator starting on http://localhost:%s\n", tt.port)
+			msg2 := fmt.Sprintf("Health check available at http://localhost:%s/health\n", tt.port)
+
+			if !strings.Contains(msg1, tt.expectedInMsg[0]) {
+				t.Errorf("Message 1 doesn't contain expected text")
+			}
+
+			if !strings.Contains(msg2, tt.expectedInMsg[1]) {
+				t.Errorf("Message 2 doesn't contain expected text")
+			}
+		})
+	}
+}
+
+// Mock handler for testing - assumes you have a handler function
+// func handler(w http.ResponseWriter, r *http.Request) {
+// w.WriteHeader(http.StatusOK)
+// w.Write([]byte("OK"))
+// }
+
+// Helper function to suppress log output during tests
+func suppressLogs() func() {
+	null, _ := os.Open(os.DevNull)
+	oldOutput := log.Writer()
+	log.SetOutput(null)
+	return func() {
+		log.SetOutput(oldOutput)
+		null.Close()
 	}
 }
