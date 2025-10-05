@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"log"
@@ -9,7 +10,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"encoding/json"
 	"time"
 )
 
@@ -55,7 +55,7 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Return HTTP 200 OK with health status
 	w.WriteHeader(http.StatusOK)
-	
+
 	// Encode and send JSON response
 	if err := json.NewEncoder(w).Encode(health); err != nil {
 		log.Printf("Health check JSON encoding error: %v", err)
@@ -65,10 +65,15 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // loadTemplate loads and parses the HTML template from file
-func loadTemplate() (*template.Template, error) {
-	templateData, err := os.ReadFile("index.html")
+func loadTemplate(filename ...string) (*template.Template, error) {
+	file := "index.html"
+	if len(filename) > 0 && filename[0] != "" {
+		file = filename[0]
+	}
+
+	templateData, err := os.ReadFile(file)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read index.html: %v", err)
+		return nil, fmt.Errorf("failed to read %s: %v", file, err)
 	}
 
 	tmpl, err := template.New("subnet").Parse(string(templateData))
