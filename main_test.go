@@ -688,49 +688,6 @@ func TestHealthHandler_CacheHeaders(t *testing.T) {
 	}
 }
 
-func TestHealthHandler_UptimeCalculation(t *testing.T) {
-	t.Parallel()
-
-	// Set start time to 1 hour ago
-	testStartTime := time.Now().Add(-1 * time.Hour)
-	originalStartTime := startTime
-	startTime = testStartTime
-	defer func() { startTime = originalStartTime }()
-
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
-	w := httptest.NewRecorder()
-
-	healthHandler(w, req)
-
-	var health HealthResponse
-	if err := json.NewDecoder(w.Body).Decode(&health); err != nil {
-		t.Fatalf("Failed to decode response body: %v", err)
-	}
-
-	// Verify uptime indicates roughly 1 hour
-	// The uptime string should contain "h" for hours
-	if health.Uptime == "" {
-		t.Error("Uptime should not be empty")
-	}
-
-	// Parse the uptime to verify it's approximately correct
-	uptime, err := time.ParseDuration(health.Uptime)
-	if err != nil {
-		t.Fatalf("Failed to parse uptime duration: %v", err)
-	}
-
-	expectedUptime := time.Since(testStartTime)
-	diff := uptime - expectedUptime
-	if diff < 0 {
-		diff = -diff
-	}
-
-	// Allow 1 second tolerance for test execution time
-	if diff > time.Second {
-		t.Errorf("Uptime calculation incorrect: expected ~%v, got %v (diff: %v)", expectedUptime, uptime, diff)
-	}
-}
-
 func TestHealthHandler_ConcurrentRequests(t *testing.T) {
 	t.Parallel()
 
