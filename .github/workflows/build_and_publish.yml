@@ -8,7 +8,7 @@ on:
 
 env:
   DOCKER_IMAGE_NAME: jurikolo/go-ip-subnet-calculator
-  GO_VERSION: '1.24'
+  GO_VERSION: '1.25'
 
 jobs:
   test:
